@@ -1,0 +1,8 @@
+
+config ARM_SMMU_v3
+	bool "ARM SMMUv3 Support"
+	depends on ARM_64
+	help
+	 Support for implementations of the ARM System MMU architecture
+	 version 3.
+

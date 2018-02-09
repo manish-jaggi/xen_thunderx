@@ -1460,6 +1460,7 @@ err:
 static void __init setup_virt_paging_one(void *data)
 {
     unsigned long val = (unsigned long)data;
+    /* SMMUv3 S2 cfg vtcr reuses the following value */
     WRITE_SYSREG32(val, VTCR_EL2);
     isb();
 }
