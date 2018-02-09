@@ -78,7 +78,7 @@ struct resource
 
 #define resource_size(res) (res)->size;
 
-#define platform_device dt_device_node
+#define platform_device device
 
 #define IORESOURCE_MEM 0
 #define IORESOURCE_IRQ 1
@@ -99,12 +99,12 @@ static struct resource *platform_get_resource(struct platform_device *pdev,
 
 	switch (type) {
 	case IORESOURCE_MEM:
-		ret = dt_device_get_address(pdev, num, &res.addr, &res.size);
+		ret = dt_device_get_address(dev_to_dt(pdev), num, &res.addr, &res.size);
 
 		return ((ret) ? NULL : &res);
 
 	case IORESOURCE_IRQ:
-		ret = platform_get_irq(pdev, num);
+		ret = platform_get_irq(dev_to_dt(pdev), num);
 		if (ret < 0)
 			return NULL;
 
@@ -2286,7 +2286,7 @@ static int arm_smmu_device_dt_probe(struct platform_device *pdev)
 	const struct of_device_id *of_id;
 	struct resource *res;
 	struct arm_smmu_device *smmu;
-	struct device *dev = &pdev->dev;
+	struct device *dev = pdev;
 	struct rb_node *node;
 	struct of_phandle_args masterspec;
 	int num_irqs, i, err;
@@ -2339,7 +2339,7 @@ static int arm_smmu_device_dt_probe(struct platform_device *pdev)
 	}
 
 	for (i = 0; i < num_irqs; ++i) {
-		int irq = platform_get_irq(pdev, i);
+		int irq = platform_get_irq(dev_to_dt(pdev), i);
 
 		if (irq < 0) {
 			dev_err(dev, "failed to get irq index %d\n", i);
@@ -2820,7 +2820,7 @@ static __init int arm_smmu_dt_init(struct dt_device_node *dev,
 	 */
 	dt_device_set_used_by(dev, DOMID_XEN);
 
-	rc = arm_smmu_device_dt_probe(dev);
+	rc = arm_smmu_device_dt_probe(dt_to_dev(dev));
 	if (rc)
 		return rc;
 
