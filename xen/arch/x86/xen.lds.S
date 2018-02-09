@@ -247,6 +247,7 @@ SECTIONS
        *(.data)
        *(.data.rel)
        *(.data.rel.*)
+       *(.data.unlikely)
        CONSTRUCTORS
   } :text
 

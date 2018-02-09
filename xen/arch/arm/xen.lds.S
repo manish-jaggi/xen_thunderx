@@ -87,6 +87,7 @@ SECTIONS
        __end_schedulers_array = .;
        *(.data.rel)
        *(.data.rel.*)
+       *(.data.unlikely)
        CONSTRUCTORS
   } :text
 

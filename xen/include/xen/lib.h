@@ -11,6 +11,19 @@
 #define BUG_ON(p)  do { if (unlikely(p)) BUG();  } while (0)
 #define WARN_ON(p) do { if (unlikely(p)) WARN(); } while (0)
 
+#define WARN_ON_ONCE(p)                             \
+({                                                  \
+    static bool __section(".data.unlikely") __warned; \
+    int __ret_warn_once = !!(p);                    \
+                                                    \
+    if ( unlikely(__ret_warn_once && !__warned) )     \
+    {                                               \
+        __warned = true;                            \
+        WARN();                                     \
+    }                                               \
+    unlikely(__ret_warn_once);                      \
+})
+
 #if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)
 /* Force a compilation error if condition is true */
 #define BUILD_BUG_ON(cond) ({ _Static_assert(!(cond), "!(" #cond ")"); })
