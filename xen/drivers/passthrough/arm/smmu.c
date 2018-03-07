@@ -46,10 +46,12 @@
 #include <xen/rbtree.h>
 #include <xen/sched.h>
 #include <xen/sizes.h>
+#include <xen/pci.h>
 #include <asm/atomic.h>
 #include <asm/device.h>
 #include <asm/io.h>
 #include <asm/platform.h>
+#include <asm/pci.h>
 
 /* Xen: The below defines are redefined within the file. Undef it */
 #undef SCTLR_AFE
@@ -181,7 +183,6 @@ static void __iomem *devm_ioremap_resource(struct device *dev,
  * Xen: PCI functions
  * TODO: It should be implemented when PCI will be supported
  */
-#define to_pci_dev(dev)	(NULL)
 static inline int pci_for_each_dma_alias(struct pci_dev *pdev,
 					 int (*fn) (struct pci_dev *pdev,
 						    u16 alias, void *data),
