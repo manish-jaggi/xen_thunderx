@@ -114,6 +114,8 @@ struct pci_dev {
     u64 vf_rlen[6];
 };
 
+#define pci_domain_nr(pdev) pdev->seg
+
 #define for_each_pdev(domain, pdev) \
     list_for_each_entry(pdev, &(domain->arch.pdev_list), domain_list)
 
