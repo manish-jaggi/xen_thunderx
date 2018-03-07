@@ -59,6 +59,10 @@ config SBSA_VUART_CONSOLE
 
 endmenu
 
+config ACPI_IORT
+        depends on ACPI
+        def_bool y
+
 menu "ARM errata workaround via the alternative framework"
 	depends on HAS_ALTERNATIVE
 
