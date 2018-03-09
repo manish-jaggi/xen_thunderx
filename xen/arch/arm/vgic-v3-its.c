@@ -1508,13 +1508,36 @@ unsigned int vgic_v3_its_count(const struct domain *d)
     return ret;
 }
 
+static int vgic_map_translation_space(struct domain *d, paddr_t guest_addr)
+{
+       u64 addr, size;
+       int ret;
+       addr = guest_addr + SZ_64K;
+       size = SZ_64K;
+
+       ret = map_mmio_regions(d,
+                       gaddr_to_gfn(addr ),
+                       DIV_ROUND_UP(size, PAGE_SIZE),
+                       maddr_to_mfn(addr ));
+
+       if (ret)
+       {
+               printk(XENLOG_ERR "Unable to map to dom%d access to"
+                               " 0x%"PRIx64" - 0x%"PRIx64"\n",
+                               d->domain_id,
+                               addr & PAGE_MASK, PAGE_ALIGN(addr + size) - 1);
+       }
+       return ret;
+
+}
+
 /*
  * For a hardware domain, this will iterate over the host ITSes
  * and map one virtual ITS per host ITS at the same address.
  */
 int vgic_v3_its_init_domain(struct domain *d)
 {
-    int ret;
+       int ret;
 
     INIT_LIST_HEAD(&d->arch.vgic.vits_list);
     spin_lock_init(&d->arch.vgic.its_devices_lock);
@@ -1538,6 +1561,7 @@ int vgic_v3_its_init_domain(struct domain *d)
                 return ret;
             else
                 d->arch.vgic.has_its = true;
+           vgic_map_translation_space(d, hw_its->addr);
         }
     }
 
