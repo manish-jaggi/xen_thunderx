@@ -379,6 +379,212 @@ static inline struct fwnode_handle *acpi_alloc_fwnode_static(void)
     return fwnode;
 }
 
+static inline bool __must_check IS_ERR_OR_NULL(__force const void *ptr)
+{
+    return unlikely(!ptr) || IS_ERR_VALUE((unsigned long)ptr);
+}
+
+static inline bool is_acpi_static_node(const struct fwnode_handle *fwnode)
+{
+    return !IS_ERR_OR_NULL(fwnode) &&
+        fwnode->ops == &acpi_static_fwnode_ops;
+}
+
+static inline void acpi_free_fwnode_static(struct fwnode_handle *fwnode)
+{
+    if (WARN_ON(!is_acpi_static_node(fwnode)))
+        return;
+
+    xfree(fwnode);
+}
+
+int fixup_rid_devid_map(struct acpi_iort_node *inode,
+                           struct acpi_iort_id_mapping *pci_idmap,
+                           struct acpi_iort_node *smmu_node)
+{
+
+    unsigned int p_input_base, p_output_base, p_id_count;
+    unsigned int s_input_base, s_output_base, s_id_count;
+    unsigned int delta, i;
+    int ret = 0;
+    struct acpi_iort_id_mapping *smmu_idmap = NULL;
+    struct acpi_iort_node *its_node;
+    struct acpi_table_iort *iort;
+
+    iort = (struct acpi_table_iort*) iort_table;
+
+    p_input_base = pci_idmap->input_base;
+    p_output_base = pci_idmap->output_base;
+    p_id_count = pci_idmap->id_count;
+
+    smmu_idmap = (struct acpi_iort_id_mapping*) ((u8*) smmu_node +
+                  smmu_node->mapping_offset);
+
+    for ( i = 0; i < smmu_node->mapping_count; i++, smmu_idmap++ )
+    {
+        s_input_base = smmu_idmap->input_base;
+        s_output_base = smmu_idmap->output_base;
+        s_id_count = smmu_idmap->id_count;
+        its_node = ACPI_ADD_PTR(struct acpi_iort_node, iort,
+                        smmu_idmap->output_reference);
+
+        if (s_input_base <= p_output_base)
+    {
+            int count;
+            if (s_input_base + s_id_count < p_output_base)
+                continue;
+
+            delta = p_output_base - s_input_base;
+            count = s_input_base + s_id_count <= p_output_base +
+                p_id_count ? s_id_count - delta : p_id_count;
+
+            ret = add_rid_devid_map (inode, its_node,
+                            p_input_base,
+                            s_output_base + delta,
+                            count);
+            if (ret)
+                return ret;
+        } 
+    else 
+    {
+            int count;
+            if ( p_output_base + p_id_count < s_input_base )
+                continue;
+
+            delta = s_input_base - p_output_base;
+            count = s_input_base + s_id_count < p_output_base +
+                p_id_count ? s_id_count : p_id_count - delta;
+
+            ret = add_rid_devid_map (inode, its_node,
+                            p_input_base + delta,
+                            s_output_base, count);
+
+            if ( ret )
+                return ret;
+        }
+    }
+
+    return ret;
+}
+
+void parse_pcirc_node(struct acpi_iort_node *iort_node)
+{
+    int j, ret;
+    struct acpi_iort_id_mapping *idmap;
+    struct acpi_iort_node *onode;
+    struct acpi_table_iort *iort;
+
+    iort = (struct acpi_table_iort*) iort_table;
+    idmap = ACPI_ADD_PTR(struct acpi_iort_id_mapping, iort_node,
+                 iort_node->mapping_offset);
+
+    /* iterate over idmap */
+    for ( j = 0; j < iort_node->mapping_count; j++ )
+    {
+        struct acpi_iort_node *its_node;
+        struct acpi_iort_node *smmu_node;
+        onode = ACPI_ADD_PTR(struct acpi_iort_node, iort,
+                     idmap->output_reference);
+
+        switch (onode->type)
+        {
+        case ACPI_IORT_NODE_ITS_GROUP:
+
+            its_node = ACPI_ADD_PTR(struct acpi_iort_node, iort,
+                                    idmap->output_reference);
+
+            ret = add_rid_devid_map(iort_node, its_node,
+                                    idmap->input_base,
+                                    idmap->output_base,
+                                    idmap->id_count);
+            if ( ret ) 
+            {
+                printk("%s: add_rid_devid_map"
+                       "failed with ret=%d \r\n",
+                         __func__, ret);
+                break;
+            }
+        break;
+
+        case ACPI_IORT_NODE_SMMU:
+        case ACPI_IORT_NODE_SMMU_V3:
+
+            smmu_node = ACPI_ADD_PTR(struct acpi_iort_node,
+                                     iort_table,
+                                     idmap->output_reference);
+
+            ret = add_rid_sid_map(iort_node,
+                                  smmu_node,
+                                  idmap->input_base,
+                                  idmap->output_base,
+                                  idmap->id_count);
+            if ( ret )
+            {
+                printk("%s: add_rid_sid_map"
+                       "failed with ret=%d \r\n",
+                        __func__, ret);
+                break;
+            }
+
+            ret = fixup_rid_devid_map(iort_node, idmap, onode);
+            if ( ret )
+            {
+                printk("%s: fixup_rid_devid_map"
+                       "failed with ret=%d \r\n",
+                       __func__, ret);
+                break;
+            }
+            break;
+        }
+        idmap++;
+    }
+}
+
+void parse_smmu_node(struct acpi_iort_node *iort_node)
+{
+    int ret;
+    struct fwnode_handle *fwnode;
+    fwnode = acpi_alloc_fwnode_static();
+    if ( !fwnode )
+        return;
+
+    iort_set_fwnode(iort_node, fwnode);
+    ret = iort_add_smmu_platform_device(iort_node);
+    if ( ret )
+        acpi_free_fwnode_static(fwnode);
+}
+
+void parse_iort(void)
+{
+    struct acpi_iort_node *iort_node, *iort_end;
+    struct acpi_table_iort *iort;
+    int i;
+
+    iort = (struct acpi_table_iort*) iort_table;
+    iort_node = ACPI_ADD_PTR(struct acpi_iort_node, iort,
+            iort->node_offset);
+    iort_end = ACPI_ADD_PTR(struct acpi_iort_node, iort,
+            iort->header.length);
+
+    for (i = 0; i < iort->node_count; i++)
+    {
+        if ( iort_node >= iort_end )
+        {
+            printk("iort node pointer overflows, bad table\n");
+            return;
+        }
+
+        if ( iort_node->type == ACPI_IORT_NODE_PCI_ROOT_COMPLEX )
+            parse_pcirc_node(iort_node);
+        else if ( (iort_node->type == ACPI_IORT_NODE_SMMU ||
+                 iort_node->type == ACPI_IORT_NODE_SMMU_V3) )
+            parse_smmu_node(iort_node);
+
+        iort_node = ACPI_ADD_PTR(struct acpi_iort_node, iort_node,
+                iort_node->length);
+    }
+}
+
 int __init acpi_iort_init(void)
 {
     acpi_status status;
@@ -396,6 +602,7 @@ int __init acpi_iort_init(void)
         return -1;
     }
 
+    parse_iort();
     return 0;
 }
 __initcall(acpi_iort_init);
