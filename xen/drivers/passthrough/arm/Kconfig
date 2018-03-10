@@ -6,3 +6,9 @@ config ARM_SMMU_v3
 	 Support for implementations of the ARM System MMU architecture
 	 version 3.
 
+config ARM_SMMU
+	bool "ARM Legacy SMMU Support"
+	depends on ARM
+	help
+	 Support for implementations of the ARM System MMU architecture
+	 version 1 and 2.
