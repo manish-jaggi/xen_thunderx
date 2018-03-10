@@ -41,6 +41,7 @@
 #include <xen/irq.h>
 #include <xen/lib.h>
 #include <xen/list.h>
+#include <xen/linux_compat.h>
 #include <xen/mm.h>
 #include <xen/vmap.h>
 #include <xen/rbtree.h>
@@ -53,35 +54,12 @@
 #include <asm/platform.h>
 #include <asm/pci.h>
 
+#include "arm_smmu.h" /* Not a self contained header. So last in the list */
 /* Xen: The below defines are redefined within the file. Undef it */
 #undef SCTLR_AFE
 #undef SCTLR_TRE
 #undef SCTLR_M
 #undef TTBCR_EAE
-
-/* Alias to Xen device tree helpers */
-#define device_node dt_device_node
-#define of_phandle_args dt_phandle_args
-#define of_device_id dt_device_match
-#define of_match_node dt_match_node
-#define of_property_read_u32(np, pname, out) (!dt_property_read_u32(np, pname, out))
-#define of_property_read_bool dt_property_read_bool
-#define of_parse_phandle_with_args dt_parse_phandle_with_args
-
-/* Xen: Helpers to get device MMIO and IRQs */
-struct resource
-{
-	u64 addr;
-	u64 size;
-	unsigned int type;
-};
-
-#define resource_size(res) (res)->size;
-
-#define platform_device device
-
-#define IORESOURCE_MEM 0
-#define IORESOURCE_IRQ 1
 
 static struct resource *platform_get_resource(struct platform_device *pdev,
 					      unsigned int type,
@@ -120,58 +98,6 @@ static struct resource *platform_get_resource(struct platform_device *pdev,
 
 /* Xen: Helpers for IRQ functions */
 #define request_irq(irq, func, flags, name, dev) request_irq(irq, flags, func, name, dev)
-#define free_irq release_irq
-
-enum irqreturn {
-	IRQ_NONE	= (0 << 0),
-	IRQ_HANDLED	= (1 << 0),
-};
-
-typedef enum irqreturn irqreturn_t;
-
-/* Device logger functions
- * TODO: Handle PCI
- */
-#define dev_print(dev, lvl, fmt, ...)						\
-	 printk(lvl "smmu: %s: " fmt, dt_node_full_name(dev_to_dt(dev)), ## __VA_ARGS__)
-
-#define dev_dbg(dev, fmt, ...) dev_print(dev, XENLOG_DEBUG, fmt, ## __VA_ARGS__)
-#define dev_notice(dev, fmt, ...) dev_print(dev, XENLOG_INFO, fmt, ## __VA_ARGS__)
-#define dev_warn(dev, fmt, ...) dev_print(dev, XENLOG_WARNING, fmt, ## __VA_ARGS__)
-#define dev_err(dev, fmt, ...) dev_print(dev, XENLOG_ERR, fmt, ## __VA_ARGS__)
-
-#define dev_err_ratelimited(dev, fmt, ...)					\
-	 dev_print(dev, XENLOG_ERR, fmt, ## __VA_ARGS__)
-
-#define dev_name(dev) dt_node_full_name(dev_to_dt(dev))
-
-/* Alias to Xen allocation helpers */
-#define kfree xfree
-#define kmalloc(size, flags)		_xmalloc(size, sizeof(void *))
-#define kzalloc(size, flags)		_xzalloc(size, sizeof(void *))
-#define devm_kzalloc(dev, size, flags)	_xzalloc(size, sizeof(void *))
-#define kmalloc_array(size, n, flags)	_xmalloc_array(size, sizeof(void *), n)
-
-static void __iomem *devm_ioremap_resource(struct device *dev,
-					   struct resource *res)
-{
-	void __iomem *ptr;
-
-	if (!res || res->type != IORESOURCE_MEM) {
-		dev_err(dev, "Invalid resource\n");
-		return ERR_PTR(-EINVAL);
-	}
-
-	ptr = ioremap_nocache(res->addr, res->size);
-	if (!ptr) {
-		dev_err(dev,
-			"ioremap failed (addr 0x%"PRIx64" size 0x%"PRIx64")\n",
-			res->addr, res->size);
-		return ERR_PTR(-ENOMEM);
-	}
-
-	return ptr;
-}
 
 /* Xen doesn't handle IOMMU fault */
 #define report_iommu_fault(...)	1
@@ -195,32 +121,6 @@ static inline int pci_for_each_dma_alias(struct pci_dev *pdev,
 /* Xen: misc */
 #define PHYS_MASK_SHIFT		PADDR_BITS
 typedef paddr_t phys_addr_t;
-
-#define VA_BITS		0	/* Only used for configuring stage-1 input size */
-
-#define MODULE_DEVICE_TABLE(type, name)
-#define module_param_named(name, value, type, perm)
-#define MODULE_PARM_DESC(_parm, desc)
-
-/* Xen: Dummy iommu_domain */
-struct iommu_domain
-{
-	/* Runtime SMMU configuration for this iommu_domain */
-	struct arm_smmu_domain		*priv;
-
-	atomic_t ref;
-	/* Used to link iommu_domain contexts for a same domain.
-	 * There is at least one per-SMMU to used by the domain.
-	 * */
-	struct list_head		list;
-};
-
-/* Xen: Describes informations required for a Xen domain */
-struct arm_smmu_xen_domain {
-	spinlock_t			lock;
-	/* List of context (i.e iommu_domain) associated to this domain */
-	struct list_head		contexts;
-};
 
 /*
  * Xen: Information about each device stored in dev->archdata.iommu

@@ -46,31 +46,12 @@
 #include <acpi/acpi_iort.h>
 #include <asm/atomic.h>
 #include <asm/device.h>
+#include <asm/fwspec.h>
+#include <asm/fwnode.h>
 #include <asm/io.h>
 #include <asm/platform.h>
 
-/* Alias to Xen device tree helpers */
-#define device_node dt_device_node
-#define of_phandle_args dt_phandle_args
-#define of_device_id dt_device_match
-#define of_match_node dt_match_node
-#define of_property_read_u32(np, pname, out) (!dt_property_read_u32(np, pname, out))
-#define of_property_read_bool dt_property_read_bool
-#define of_parse_phandle_with_args dt_parse_phandle_with_args
-
-/* Xen: Helpers to get device MMIO and IRQs */
-struct resource {
-	u64 addr;
-	u64 size;
-	unsigned int type;
-};
-
-#define resource_size(res) ((res)->size)
-
-#define platform_device device
-
-#define IORESOURCE_MEM 0
-#define IORESOURCE_IRQ 1
+#include "arm_smmu.h"
 
 static struct resource *platform_get_resource(struct platform_device *pdev,
 					      unsigned int type,
@@ -199,79 +180,6 @@ static void dmam_free_coherent(struct device *dev, size_t size, void *vaddr,
 {
 	xfree(vaddr);
 }
-
-/* Xen: Stub out DMA domain related functions */
-#define iommu_get_dma_cookie(dom) 0
-#define iommu_put_dma_cookie(dom)
-
-/* Xen: Stub out module param related function */
-#define module_param_named(a, b, c, d)
-#define MODULE_PARM_DESC(a, b)
-
-#define dma_set_mask_and_coherent(d, b) 0
-
-#define of_dma_is_coherent(n) 0
-
-#define MODULE_DEVICE_TABLE(type, name)
-
-static void __iomem *devm_ioremap_resource(struct device *dev,
-					   struct resource *res)
-{
-	void __iomem *ptr;
-
-	if (!res || res->type != IORESOURCE_MEM) {
-		dev_err(dev, "Invalid resource\n");
-		return ERR_PTR(-EINVAL);
-	}
-
-	ptr = ioremap_nocache(res->addr, res->size);
-	if (!ptr) {
-		dev_err(dev,
-			"ioremap failed (addr 0x%"PRIx64" size 0x%"PRIx64")\n",
-			res->addr, res->size);
-		return ERR_PTR(-ENOMEM);
-	}
-
-	return ptr;
-}
-
-/* Xen: Compatibility define for iommu_domain_geometry.*/
-struct iommu_domain_geometry {
-	dma_addr_t aperture_start; /* First address that can be mapped    */
-	dma_addr_t aperture_end;   /* Last address that can be mapped     */
-	bool force_aperture;       /* DMA only allowed in mappable range? */
-};
-
-
-/* Xen: Type definitions for iommu_domain */
-#define IOMMU_DOMAIN_UNMANAGED 0
-#define IOMMU_DOMAIN_DMA 1
-#define IOMMU_DOMAIN_IDENTITY 2
-
-/* Xen: Dummy iommu_domain */
-struct iommu_domain {
-	/* Runtime SMMU configuration for this iommu_domain */
-	struct arm_smmu_domain		*priv;
-	unsigned int type;
-
-	/* Dummy compatibility defines */
-	unsigned long pgsize_bitmap;
-	struct iommu_domain_geometry geometry;
-
-	atomic_t ref;
-	/*
-	 * Used to link iommu_domain contexts for a same domain.
-	 * There is at least one per-SMMU to used by the domain.
-	 */
-	struct list_head		list;
-};
-
-/* Xen: Describes information required for a Xen domain */
-struct arm_smmu_xen_domain {
-	spinlock_t			lock;
-	/* List of iommu domains associated to this domain */
-	struct list_head		contexts;
-};
 
 /*
  * Xen: Information about each device stored in dev->archdata.iommu
