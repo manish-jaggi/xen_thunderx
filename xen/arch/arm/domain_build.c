@@ -14,6 +14,7 @@
 #include <xen/acpi.h>
 #include <xen/warning.h>
 #include <acpi/actables.h>
+#include <asm/acpi/gen-iort.h>
 #include <asm/device.h>
 #include <asm/setup.h>
 #include <asm/platform.h>
@@ -1801,7 +1802,7 @@ static int acpi_create_fadt(struct domain *d, struct membank tbl_add[])
 
 static int estimate_acpi_efi_size(struct domain *d, struct kernel_info *kinfo)
 {
-    size_t efi_size, acpi_size, madt_size;
+    size_t efi_size, acpi_size, table_size;
     u64 addr;
     struct acpi_table_rsdp *rsdp_tbl;
     struct acpi_table_header *table;
@@ -1811,8 +1812,8 @@ static int estimate_acpi_efi_size(struct domain *d, struct kernel_info *kinfo)
     acpi_size = ROUNDUP(sizeof(struct acpi_table_fadt), 8);
     acpi_size += ROUNDUP(sizeof(struct acpi_table_stao), 8);
 
-    madt_size = gic_get_hwdom_madt_size(d);
-    acpi_size += ROUNDUP(madt_size, 8);
+    table_size = gic_get_hwdom_madt_size(d);
+    acpi_size += ROUNDUP(table_size, 8);
 
     addr = acpi_os_get_root_pointer();
     if ( !addr )
@@ -1842,6 +1843,15 @@ static int estimate_acpi_efi_size(struct domain *d, struct kernel_info *kinfo)
     acpi_os_unmap_memory(table, sizeof(struct acpi_table_header));
 
     acpi_size += ROUNDUP(sizeof(struct acpi_table_rsdp), 8);
+
+    if ( estimate_iort_size(&table_size) )
+    {
+        printk("Unable to get hwdom iort size\n");
+        return -EINVAL;
+    }
+
+    acpi_size += ROUNDUP(table_size, 8);
+
     d->arch.efi_acpi_len = PAGE_ALIGN(ROUNDUP(efi_size, 8)
                                       + ROUNDUP(acpi_size, 8));
 
