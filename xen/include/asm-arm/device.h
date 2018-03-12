@@ -7,6 +7,7 @@ enum device_type
 {
     DEV_DT,
     DEV_PCI,
+    DEV_ACPI,
 };
 
 struct dev_archdata {
@@ -18,9 +19,18 @@ struct device
 {
     enum device_type type;
 #ifdef CONFIG_HAS_DEVICE_TREE
-    struct dt_device_node *of_node; /* Used by drivers imported from Linux */
+    /*
+     * TODO: of_node is redundant by addition of fwnode.
+     * Will be cleaned in future, kept here for compatability
+     * with smmuv2 driver
+     */ 
+    struct dt_device_node *of_node;
+#endif
+#ifdef CONFIG_ACPI
+    void *acpi_node;
 #endif
     struct dev_archdata archdata;
+    struct fwnode_handle *fwnode;
     struct iommu_fwspec *iommu_fwspec;
 };
 
