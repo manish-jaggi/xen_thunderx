@@ -22,6 +22,17 @@
  */ 
 int estimate_iort_size(size_t *iort_size);
 
+/*
+ * Checks if IORT is present in ACPI tables.
+ */
+bool is_iort_available(void);
+
+/*
+ * Prepares IORT in buffer hwdom_iort and updates iort_size
+ */
+int prepare_hwdom_iort(struct acpi_table_iort *hwdom_iort,
+                       unsigned int *iort_size);
+ 
 #endif
 /*
  * Local variables:
