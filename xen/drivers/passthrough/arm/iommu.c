@@ -19,6 +19,8 @@
 #include <xen/iommu.h>
 #include <xen/device_tree.h>
 #include <asm/device.h>
+#include <asm/fwnode.h>
+#include <asm/fwspec.h>
 
 static const struct iommu_ops *iommu_ops;
 
@@ -73,3 +75,86 @@ int arch_iommu_populate_page_table(struct domain *d)
     /* The IOMMU shares the p2m with the CPU */
     return -ENOSYS;
 }
+
+/**
+ * fwnode_handle_put - Drop reference to a device node
+ * @fwnode: Pointer to the device node to drop the reference to.
+ *
+ * To be used when terminating device_for_each_child_node() iteration with 
+ * break / return to prevent stale device node references being left behind
+ */
+void fwnode_handle_put(struct fwnode_handle *fwnode)
+{
+    fwnode_call_void_op(fwnode, put);
+}
+
+const struct iommu_ops *iommu_ops_from_fwnode(struct fwnode_handle *fwnode)
+{
+    return iommu_get_ops();
+}
+
+int iommu_fwspec_init(struct device *dev, struct fwnode_handle *iommu_fwnode,
+                      const struct iommu_ops *ops)
+{
+    struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+
+    if ( fwspec )
+       return ops == fwspec->ops ? 0 : -EINVAL;
+
+    fwspec = xzalloc_bytes(sizeof(*fwspec));
+    if ( !fwspec )
+        return -ENOMEM;
+#if 0 
+       of_node_get(to_of_node(iommu_fwnode)); /* TODO */
+#endif
+    fwspec->iommu_fwnode = iommu_fwnode;
+    fwspec->ops = ops;
+    dev->iommu_fwspec = fwspec;
+
+    return 0;
+}
+
+void iommu_fwspec_free(struct device *dev)
+{
+   struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+
+    if ( fwspec )
+    {
+        fwnode_handle_put(fwspec->iommu_fwnode);
+        xfree(fwspec);
+        dev->iommu_fwspec = NULL;
+    }
+}
+
+int iommu_fwspec_add_ids(struct device *dev, u32 *ids, int num_ids)
+{
+    struct iommu_fwspec *fwspec_n;
+    struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+    size_t size, size_n;
+    int i;
+
+    if ( !fwspec )
+        return -EINVAL;
+
+    size = offsetof(struct iommu_fwspec, ids[fwspec->num_ids]);
+    size_n = offsetof(struct iommu_fwspec, ids[fwspec->num_ids + num_ids]);
+    if ( size_n > size )
+    {
+        fwspec_n = _xzalloc(size_n, sizeof(void*));
+        if ( !fwspec_n )
+             return -ENOMEM;
+        
+        memcpy(fwspec_n, fwspec, size);
+        xfree(fwspec);
+        fwspec = fwspec_n;
+    }
+
+    for ( i = 0; i < num_ids; i++ )
+        fwspec->ids[fwspec->num_ids + i] = ids[i];
+
+    fwspec->num_ids += num_ids;
+    dev->iommu_fwspec = fwspec;
+
+    return 0;
+}
+

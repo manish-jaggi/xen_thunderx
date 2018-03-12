@@ -20,6 +20,7 @@ struct device
     struct dt_device_node *of_node; /* Used by drivers imported from Linux */
 #endif
     struct dev_archdata archdata;
+    struct iommu_fwspec *iommu_fwspec;
 };
 
 typedef struct device device_t;
