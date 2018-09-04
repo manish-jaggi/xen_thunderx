@@ -1503,7 +1503,7 @@ static int gicv3_make_hwdom_madt(const struct domain *d, u32 offset)
 
     /* Add Generic Redistributor */
     size = sizeof(struct acpi_madt_generic_redistributor);
-    for ( i = 0; i < gicv3.rdist_count; i++ )
+    for ( i = 0; i < d->arch.vgic.nr_regions; i++ )
     {
         gicr = (struct acpi_madt_generic_redistributor *)(base_ptr + table_len);
         gicr->header.type = ACPI_MADT_TYPE_GENERIC_REDISTRIBUTOR;

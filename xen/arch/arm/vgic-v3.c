@@ -1573,15 +1573,104 @@ static const struct mmio_handler_ops vgic_distr_mmio_handler = {
     .write = vgic_v3_distr_mmio_write,
 };
 
+static inline unsigned int vgic_v3_rdist_count(struct domain *d)
+{
+    /*
+     * Normally there is only one GICv3 redistributor region.
+     * The GICv3 DT binding provisions for multiple regions, since there are
+     * platforms out there which need those (multi-socket systems).
+     * For Dom0 we have to live with the MMIO layout the hardware provides,
+     * so we have to copy the multiple regions - as the first region may not
+     * provide enough space to hold all redistributors we need.
+     * However DomU get a constructed memory map, so we can go with
+     * the architected single redistributor region.
+     */
+    return is_hardware_domain(d) ? vgic_v3_hw.nr_rdist_regions :
+               GUEST_GICV3_RDIST_REGIONS;
+}
+
+static int vgic_v3_initialize_rdists(struct domain *d)
+{
+    struct vgic_rdist_region *rdist_regions;
+    int rdist_count, i;
+
+   /* Allocate memory for Re-distributor regions */
+    rdist_count = vgic_v3_rdist_count(d);
+
+    rdist_regions = xzalloc_array(struct vgic_rdist_region, rdist_count);
+    if ( !rdist_regions )
+        return -ENOMEM;
+
+    d->arch.vgic.nr_regions = rdist_count;
+    d->arch.vgic.rdist_regions = rdist_regions;
+
+    if ( is_hardware_domain(d) )
+    {
+        unsigned int first_cpu = 0;
+
+        for ( i = 0; i < vgic_v3_hw.nr_rdist_regions; i++ )
+        {
+            paddr_t size = vgic_v3_hw.regions[i].size;
+
+            d->arch.vgic.rdist_regions[i].base = vgic_v3_hw.regions[i].base;
+            d->arch.vgic.rdist_regions[i].size = size;
+
+            /* Set the first CPU handled by this region */
+            d->arch.vgic.rdist_regions[i].first_cpu = first_cpu;
+
+            first_cpu += size / GICV3_GICR_SIZE;
+
+            if ( first_cpu >= d->max_vcpus )
+                break;
+        }
+
+        /* Update with the actual number of regions used */
+        d->arch.vgic.nr_regions = i + 1;
+    }
+    else
+    {
+        /* A single Re-distributor region is mapped for the guest. */
+        BUILD_BUG_ON(GUEST_GICV3_RDIST_REGIONS != 1);
+
+        /* The first redistributor should contain enough space for all CPUs */
+        BUILD_BUG_ON((GUEST_GICV3_GICR0_SIZE / GICV3_GICR_SIZE) < MAX_VIRT_CPUS);
+        d->arch.vgic.rdist_regions[0].base = GUEST_GICV3_GICR0_BASE;
+        d->arch.vgic.rdist_regions[0].size = GUEST_GICV3_GICR0_SIZE;
+        d->arch.vgic.rdist_regions[0].first_cpu = 0;
+    }
+
+    /*
+     * Register mmio handler per contiguous region occupied by the
+     * redistributors. The handler will take care to choose which
+     * redistributor is targeted.
+     */
+    for ( i = 0; i < d->arch.vgic.nr_regions; i++ )
+    {
+        struct vgic_rdist_region *region = &d->arch.vgic.rdist_regions[i];
+
+        register_mmio_handler(d, &vgic_rdistr_mmio_handler,
+                              region->base, region->size, region);
+    }
+
+    return 0;
+}
+
 static int vgic_v3_vcpu_init(struct vcpu *v)
 {
-    int i;
+    int i, rc;
     paddr_t rdist_base;
     struct vgic_rdist_region *region;
     unsigned int last_cpu;
 
     /* Convenient alias */
     struct domain *d = v->domain;
+
+    if ( v->vcpu_id == 0 )
+    {
+        rc = vgic_v3_initialize_rdists(v->domain);
+        if ( rc )
+            return rc;
+    }
 
     /*
      * Find the region where the re-distributor lives. For this purpose,
@@ -1625,36 +1714,9 @@ static int vgic_v3_vcpu_init(struct vcpu *v)
     return 0;
 }
 
-static inline unsigned int vgic_v3_rdist_count(struct domain *d)
-{
-    /*
-     * Normally there is only one GICv3 redistributor region.
-     * The GICv3 DT binding provisions for multiple regions, since there are
-     * platforms out there which need those (multi-socket systems).
-     * For Dom0 we have to live with the MMIO layout the hardware provides,
-     * so we have to copy the multiple regions - as the first region may not
-     * provide enough space to hold all redistributors we need.
-     * However DomU get a constructed memory map, so we can go with
-     * the architected single redistributor region.
-     */
-    return is_hardware_domain(d) ? vgic_v3_hw.nr_rdist_regions :
-               GUEST_GICV3_RDIST_REGIONS;
-}
-
 static int vgic_v3_domain_init(struct domain *d)
 {
-    struct vgic_rdist_region *rdist_regions;
-    int rdist_count, i, ret;
-
-    /* Allocate memory for Re-distributor regions */
-    rdist_count = vgic_v3_rdist_count(d);
-
-    rdist_regions = xzalloc_array(struct vgic_rdist_region, rdist_count);
-    if ( !rdist_regions )
-        return -ENOMEM;
-
-    d->arch.vgic.nr_regions = rdist_count;
-    d->arch.vgic.rdist_regions = rdist_regions;
+    int ret;
 
     rwlock_init(&d->arch.vgic.pend_lpi_tree_lock);
     radix_tree_init(&d->arch.vgic.pend_lpi_tree);
@@ -1665,38 +1727,12 @@ static int vgic_v3_domain_init(struct domain *d)
      */
     if ( is_hardware_domain(d) )
     {
-        unsigned int first_cpu = 0;
-
         d->arch.vgic.dbase = vgic_v3_hw.dbase;
-
-        for ( i = 0; i < vgic_v3_hw.nr_rdist_regions; i++ )
-        {
-            paddr_t size = vgic_v3_hw.regions[i].size;
-
-            d->arch.vgic.rdist_regions[i].base = vgic_v3_hw.regions[i].base;
-            d->arch.vgic.rdist_regions[i].size = size;
-
-            /* Set the first CPU handled by this region */
-            d->arch.vgic.rdist_regions[i].first_cpu = first_cpu;
-
-            first_cpu += size / GICV3_GICR_SIZE;
-        }
-
         d->arch.vgic.intid_bits = vgic_v3_hw.intid_bits;
     }
     else
     {
         d->arch.vgic.dbase = GUEST_GICV3_GICD_BASE;
-
-        /* A single Re-distributor region is mapped for the guest. */
-        BUILD_BUG_ON(GUEST_GICV3_RDIST_REGIONS != 1);
-
-        /* The first redistributor should contain enough space for all CPUs */
-        BUILD_BUG_ON((GUEST_GICV3_GICR0_SIZE / GICV3_GICR_SIZE) < MAX_VIRT_CPUS);
-        d->arch.vgic.rdist_regions[0].base = GUEST_GICV3_GICR0_BASE;
-        d->arch.vgic.rdist_regions[0].size = GUEST_GICV3_GICR0_SIZE;
-        d->arch.vgic.rdist_regions[0].first_cpu = 0;
-
         /*
          * TODO: only SPIs for now, adjust this when guests need LPIs.
          * Please note that this value just describes the bits required
@@ -1714,19 +1750,6 @@ static int vgic_v3_domain_init(struct domain *d)
     /* Register mmio handle for the Distributor */
     register_mmio_handler(d, &vgic_distr_mmio_handler, d->arch.vgic.dbase,
                           SZ_64K, NULL);
-
-    /*
-     * Register mmio handler per contiguous region occupied by the
-     * redistributors. The handler will take care to choose which
-     * redistributor is targeted.
-     */
-    for ( i = 0; i < d->arch.vgic.nr_regions; i++ )
-    {
-        struct vgic_rdist_region *region = &d->arch.vgic.rdist_regions[i];
-
-        register_mmio_handler(d, &vgic_rdistr_mmio_handler,
-                              region->base, region->size, region);
-    }
 
     d->arch.vgic.ctlr = VGICD_CTLR_DEFAULT;
 
